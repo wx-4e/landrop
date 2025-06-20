@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebRTC P2P 文件传输</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      #status {
+        margin: 10px 0;
+        padding: 10px;
+        background: #f0f0f0;
+        border-radius: 4px;
+      }
+      #fileInfo {
+        margin: 10px 0;
+      }
+      #progress {
+        width: 100%;
+        margin: 10px 0;
+      }
+      button {
+        padding: 8px 16px;
+        margin: 5px;
+      }
+      .container {
+        display: flex;
+        flex-direction: column;
+      }
+      .peer-id {
+        margin: 10px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>WebRTC P2P 文件传输</h1>
+
+      <div class="peer-id">
+        <label for="localId">你的ID:</label>
+        <input type="text" id="localId" readonly />
+        <button id="copyId">复制ID</button>
+      </div>
+
+      <div class="peer-id">
+        <label for="remoteId">对方ID:</label>
+        <input type="text" id="remoteId" />
+        <button id="connect">连接</button>
+      </div>
+
+      <div id="status">状态: 等待连接...</div>
+
+      <div>
+        <input type="file" id="fileInput" />
+        <button id="sendFile">发送文件</button>
+      </div>
+
+      <div id="fileInfo"></div>
+      <progress id="progress" value="0" max="100"></progress>
+
+      <div id="receivedFiles"></div>
+    </div>
+
+    <script>
+      // 简单的信令服务器连接（使用WebSocket）
+      const signalingServer = new WebSocket(
+        "ws://" + window.location.hostname + ":8080"
+      );
+      let localId = Math.random().toString(36).substring(2, 10);
+      let remoteId = "";
+      let peerConnection;
+      let dataChannel;
+      let fileChunks = [];
+      let currentFile = null;
+
+      // DOM元素
+      const localIdInput = document.getElementById("localId");
+      const remoteIdInput = document.getElementById("remoteId");
+      const connectButton = document.getElementById("connect");
+      const copyIdButton = document.getElementById("copyId");
+      const fileInput = document.getElementById("fileInput");
+      const sendFileButton = document.getElementById("sendFile");
+      const statusDiv = document.getElementById("status");
+      const fileInfoDiv = document.getElementById("fileInfo");
+      const progressBar = document.getElementById("progress");
+      const receivedFilesDiv = document.getElementById("receivedFiles");
+
+      // 初始化
+      localIdInput.value = localId;
+
+      // 信令服务器消息处理
+      signalingServer.onmessage = (event) => {
+        const message = JSON.parse(event.data);
+
+        if (message.type === "id") {
+          localId = message.id;
+          localIdInput.value = localId;
+        } else if (message.type === "offer") {
+          handleOffer(message);
+        } else if (message.type === "answer") {
+          handleAnswer(message);
+        } else if (message.type === "candidate") {
+          handleCandidate(message);
+        }
+      };
+
+      // 复制ID
+      copyIdButton.addEventListener("click", () => {
+        localIdInput.select();
+        document.execCommand("copy");
+        statusDiv.textContent = "状态: ID已复制";
+        setTimeout(() => {
+          statusDiv.textContent = "状态: 等待连接...";
+        }, 2000);
+      });
+
+      // 连接按钮
+      connectButton.addEventListener("click", () => {
+        remoteId = remoteIdInput.value.trim();
+        if (remoteId && remoteId !== localId) {
+          statusDiv.textContent = "状态: 正在连接...";
+          createPeerConnection();
+        }
+      });
+
+      // 创建PeerConnection
+      function createPeerConnection() {
+        const configuration = {
+          iceServers: [
+            { urls: "stun:stun.l.google.com:19302" },
+            // 对于局域网，可以不需要TURN服务器
+          ],
+        };
+
+        peerConnection = new RTCPeerConnection(configuration);
+
+        // ICE候选处理
+        peerConnection.onicecandidate = (event) => {
+          if (event.candidate) {
+            signalingServer.send(
+              JSON.stringify({
+                type: "candidate",
+                candidate: event.candidate,
+                to: remoteId,
+                from: localId,
+              })
+            );
+          }
+        };
+
+        // 数据通道
+        dataChannel = peerConnection.createDataChannel("fileTransfer");
+        setupDataChannel(dataChannel);
+
+        // 如果是发起方，创建offer
+        if (remoteId) {
+          peerConnection
+            .createOffer()
+            .then((offer) => peerConnection.setLocalDescription(offer))
+            .then(() => {
+              signalingServer.send(
+                JSON.stringify({
+                  type: "offer",
+                  offer: peerConnection.localDescription,
+                  to: remoteId,
+                  from: localId,
+                })
+              );
+            })
+            .catch((error) => {
+              console.error("创建offer失败:", error);
+              statusDiv.textContent = "状态: 连接失败";
+            });
+        }
+      }
+
+      // 处理offer
+      function handleOffer(message) {
+        remoteId = message.from;
+        remoteIdInput.value = remoteId;
+        createPeerConnection();
+
+        peerConnection
+          .setRemoteDescription(new RTCSessionDescription(message.offer))
+          .then(() => peerConnection.createAnswer())
+          .then((answer) => peerConnection.setLocalDescription(answer))
+          .then(() => {
+            signalingServer.send(
+              JSON.stringify({
+                type: "answer",
+                answer: peerConnection.localDescription,
+                to: remoteId,
+                from: localId,
+              })
+            );
+          })
+          .catch((error) => {
+            console.error("处理offer失败:", error);
+            statusDiv.textContent = "状态: 连接失败";
+          });
+      }
+
+      // 处理answer
+      function handleAnswer(message) {
+        peerConnection
+          .setRemoteDescription(new RTCSessionDescription(message.answer))
+          .catch((error) => {
+            console.error("设置远程描述失败:", error);
+            statusDiv.textContent = "状态: 连接失败";
+          });
+      }
+
+      // 处理ICE候选
+      function handleCandidate(message) {
+        peerConnection
+          .addIceCandidate(new RTCIceCandidate(message.candidate))
+          .catch((error) => {
+            console.error("添加ICE候选失败:", error);
+          });
+      }
+
+      // 设置数据通道
+      function setupDataChannel(channel) {
+        channel.onopen = () => {
+          statusDiv.textContent = "状态: 已连接";
+          sendFileButton.disabled = false;
+        };
+
+        channel.onclose = () => {
+          statusDiv.textContent = "状态: 连接已关闭";
+          sendFileButton.disabled = true;
+        };
+
+        channel.onmessage = (event) => {
+          const message = JSON.parse(event.data);
+
+          if (message.type === "fileInfo") {
+            handleFileInfo(message);
+          } else if (message.type === "fileChunk") {
+            handleFileChunk(message);
+          } else if (message.type === "fileEnd") {
+            handleFileEnd();
+          }
+        };
+      }
+
+      // 发送文件
+      sendFileButton.addEventListener("click", () => {
+        const file = fileInput.files[0];
+        if (!file) return;
+
+        currentFile = file;
+        fileInfoDiv.textContent = `准备发送: ${file.name} (${formatFileSize(
+          file.size
+        )})`;
+
+        // 发送文件信息
+        dataChannel.send(
+          JSON.stringify({
+            type: "fileInfo",
+            name: file.name,
+            size: file.size,
+            mimeType: file.type,
+          })
+        );
+
+        // 读取并发送文件块
+        const chunkSize = 16 * 1024; // 16KB chunks
+        const fileReader = new FileReader();
+        let offset = 0;
+
+        fileReader.onload = (event) => {
+          dataChannel.send(
+            JSON.stringify({
+              type: "fileChunk",
+              data: event.target.result,
+              offset: offset,
+            })
+          );
+
+          offset += event.target.result.byteLength;
+          progressBar.value = (offset / file.size) * 100;
+
+          if (offset < file.size) {
+            readNextChunk(file, offset, chunkSize, fileReader);
+          } else {
+            dataChannel.send(
+              JSON.stringify({
+                type: "fileEnd",
+              })
+            );
+            fileInfoDiv.textContent += " - 发送完成";
+          }
+        };
+
+        readNextChunk(file, offset, chunkSize, fileReader);
+      });
+
+      function readNextChunk(file, offset, chunkSize, fileReader) {
+        const slice = file.slice(offset, offset + chunkSize);
+        fileReader.readAsArrayBuffer(slice);
+      }
+
+      // 处理接收到的文件信息
+      function handleFileInfo(message) {
+        fileChunks = [];
+        currentFile = {
+          name: message.name,
+          size: message.size,
+          mimeType: message.mimeType,
+          received: 0,
+        };
+
+        fileInfoDiv.textContent = `正在接收: ${message.name} (${formatFileSize(
+          message.size
+        )})`;
+        progressBar.value = 0;
+      }
+
+      // 处理接收到的文件块
+      function handleFileChunk(message) {
+        fileChunks.push(message.data);
+        currentFile.received += message.data.byteLength;
+        progressBar.value = (currentFile.received / currentFile.size) * 100;
+      }
+
+      // 处理文件接收完成
+      function handleFileEnd() {
+        const blob = new Blob(fileChunks, { type: currentFile.mimeType });
+        const url = URL.createObjectURL(blob);
+
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = currentFile.name;
+        link.textContent = `下载 ${currentFile.name} (${formatFileSize(
+          currentFile.size
+        )})`;
+
+        const item = document.createElement("div");
+        item.appendChild(link);
+        receivedFilesDiv.appendChild(item);
+
+        fileInfoDiv.textContent += " - 接收完成";
+      }
+
+      // 辅助函数：格式化文件大小
+      function formatFileSize(bytes) {
+        if (bytes === 0) return "0 Bytes";
+        const k = 1024;
+        const sizes = ["Bytes", "KB", "MB", "GB"];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+      }
+    </script>
+  </body>
+</html>

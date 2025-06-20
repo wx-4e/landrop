@@ -1,0 +1,42 @@
+# 应用根目录 ================
+.idea/
+.vscode/
+*.log
+.DS_Store
+Thumbs.db
+
+# Node 依赖 ================
+## 全局忽略所有 node_modules
+**/node_modules/
+
+## 包管理器文件 (保留 lock 文件)
+*.lock
+!pnpm-lock.yaml # 保留 pnpm 的锁文件
+
+# 构建产物 ================
+client/dist/
+client/build/
+client/coverage/
+*.tsbuildinfo
+
+# 开发环境文件 ================
+## Vite 特定文件
+client/.vite/
+client/.temp/
+client/.cache/
+client/env.local
+client/env.*.local
+
+## 测试覆盖率
+server/coverage/
+
+# 操作系统文件 ================
+ehthumbs.db
+Desktop.ini
+
+# 编辑器文件 ================
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
