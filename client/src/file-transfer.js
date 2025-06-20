@@ -169,7 +169,7 @@ export class FileTransfer {
         (receiveState.receivedChunks.size === receiveState.totalChunks ||
           (channelIsLast && receiveState?.lastChunkProcessed))
       ) {
-        this.#assembleFile(receiveState);
+        this.#assembleFile(deviceId, receiveState);
       }
     } catch (error) {
       console.log(error);
@@ -262,7 +262,7 @@ export class FileTransfer {
    * 组装接收的文件块
    * @private
    */
-  #assembleFile(receiveState) {
+  #assembleFile(deviceId, receiveState) {
     const { fileId, receivedChunks, fileName, fileType, totalChunks } = receiveState;
 
     // 验证完整性
@@ -289,6 +289,7 @@ export class FileTransfer {
 
     // 触发事件
     this.eventListener.emit("fileReceived", {
+      deviceId,
       fileId,
       fileName,
       fileSize: file.size,

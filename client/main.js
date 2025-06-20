@@ -96,11 +96,15 @@ class Main {
       //
     });
 
-
     this.eventListener.on("dataChunkReceived", async ({ deviceId, data, channelIsLast }) => {
-      await this.fileTransfer.receiveFile(deviceId, data, channelIsLast)
+      await this.fileTransfer.receiveFile(deviceId, data, channelIsLast);
     });
-  
+
+    this.eventListener.on("fileReceived", async ({ deviceId, fileId, fileName, fileSize, fileType }) => {
+      await this.connectionManager.closeConnection("fileReceived", deviceId);
+      //TODO:UI渲染
+      console.log("文件接收完毕，清空链接");
+    });
 
     //监听文件传输异常
     this.eventListener.on("transferError", async (e) => {
